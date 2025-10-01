@@ -26,6 +26,11 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+    app.enableCors({
+        origin: 'http://localhost:5173', // 👈 el frontend
+        methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+        credentials: true,
+    });
   await app.listen(port);
 }
 
