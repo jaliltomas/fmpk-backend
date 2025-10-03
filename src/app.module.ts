@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 
 import { SessionsModule } from './modules/codex/sessions/sessions.module';
+import { ProductsModule } from './modules/products/products.module';
 
 @Module({
     imports: [
@@ -21,12 +22,13 @@ import { SessionsModule } from './modules/codex/sessions/sessions.module';
                 username: configService.get<string>('DATABASE_USER', 'codex'),
                 password: configService.get<string>('DATABASE_PASSWORD', 'codex'),
                 database: configService.get<string>('DATABASE_NAME', 'codex'),
-                entities: [__dirname + '/**/*.entity.{js,ts}'], // 👈 aquí se cargan todas las entidades
+                autoLoadEntities: true,
                 synchronize: false,
                 migrationsRun: false,
             }),
         }),
         SessionsModule,
+        ProductsModule,
     ],
 })
 export class AppModule {}
