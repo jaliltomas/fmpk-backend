@@ -5,7 +5,8 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import axios from 'axios';
+import * as http from 'http';
+import * as https from 'https';
 import { DataSource, EntityManager } from 'typeorm';
 
 import { ResetMatchesDto } from '../../dto/reset-matches.dto';
@@ -445,23 +446,98 @@ export class MatchingService {
     const endpointPath = this.resolveMatchEndpoint(node);
     const url = this.resolveNodeUrl(node, endpointPath).toString();
 
+    const parsedUrl = new URL(url);
+    const isHttps = parsedUrl.protocol === 'https:';
+    const requestFn = isHttps ? https.request : http.request;
+
+    const requestOptions: http.RequestOptions = {
+      protocol: parsedUrl.protocol,
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: `${parsedUrl.pathname}${parsedUrl.search}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-ndjson',
+        Accept: 'application/json',
+      },
+    };
+
     try {
-      const response = await axios.post<MatchingNodeResponse>(url, payload, {
-        timeout: this.nodeRequestTimeoutMs,
-        headers: { 'Content-Type': 'application/json' },
+      const rawResponse = await new Promise<string>((resolve, reject) => {
+        let settled = false;
+        const finalizeResolve = (value: string) => {
+          if (!settled) {
+            settled = true;
+            resolve(value);
+          }
+        };
+        const finalizeReject = (reason: Error) => {
+          if (!settled) {
+            settled = true;
+            reject(reason);
+          }
+        };
+        const wrapRequestError = (reason: unknown): Error =>
+          reason instanceof Error
+            ? new Error(`Node ${node.id} request failed: ${reason.message}`)
+            : new Error(`Node ${node.id} request failed: ${String(reason)}`);
+
+        const req = requestFn(requestOptions, (res) => {
+          const { statusCode = 0 } = res;
+          const chunks: Buffer[] = [];
+
+          res.on('error', (resError) => {
+            finalizeReject(wrapRequestError(resError));
+          });
+
+          res.on('data', (chunk) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+
+          res.on('end', () => {
+            const body = Buffer.concat(chunks).toString('utf8');
+
+            if (statusCode < 200 || statusCode >= 300) {
+              const snippet = body ? `: ${body.slice(0, 500)}` : '';
+              finalizeReject(
+                new Error(
+                  `Node ${node.id} request failed with status ${statusCode}${snippet}`,
+                ),
+              );
+              return;
+            }
+
+            finalizeResolve(body);
+          });
+        });
+
+        req.on('error', (error) => {
+          finalizeReject(wrapRequestError(error));
+        });
+
+        req.setTimeout(this.nodeRequestTimeoutMs, () => {
+          finalizeReject(
+            new Error(
+              `Node ${node.id} request timed out after ${this.nodeRequestTimeoutMs}ms`,
+            ),
+          );
+          req.destroy();
+        });
+
+        for (const product of payload.products) {
+          req.write(`${JSON.stringify(product)}\n`);
+        }
+
+        req.end();
       });
 
-      return this.normalizeNodeResponse(response.data, node);
+      const trimmed = rawResponse.trim();
+      const parsed = trimmed ? JSON.parse(trimmed) : {};
+
+      return this.normalizeNodeResponse(parsed, node);
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status ?? 'unknown';
-        const dataSnippet =
-          error.response?.data && typeof error.response.data === 'object'
-            ? `: ${JSON.stringify(error.response.data)}`
-            : '';
-        throw new Error(
-          `Node ${node.id} request failed with status ${status}${dataSnippet}`,
-        );
+      if (error instanceof SyntaxError) {
+        throw new Error(`Node ${node.id} returned an invalid JSON response`);
       }
 
       throw error instanceof Error
