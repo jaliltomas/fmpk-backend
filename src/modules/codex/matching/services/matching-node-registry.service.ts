@@ -135,6 +135,26 @@ export class MatchingNodeRegistryService
 
     return updated;
   }
+    async deleteNode(nodeId: string): Promise<void> {
+        const node = await this.matchingNodeRepository.findOne({ where: { id: nodeId } });
+
+        if (!node) {
+            throw new NotFoundException(`Matching node ${nodeId} was not found`);
+        }
+
+        // Elimina de la DB
+        await this.matchingNodeRepository.remove(node);
+
+        // Limpia de la cache interna
+        const state = this.nodeStates.get(nodeId);
+        if (state) {
+            state.httpAgent?.destroy();
+            state.grpcClient?.close();
+            this.nodeStates.delete(nodeId);
+        }
+
+        this.logger.log(`Matching node ${node.displayName} (${node.id}) deleted`);
+    }
 
   async pingNode(
     nodeId: string,

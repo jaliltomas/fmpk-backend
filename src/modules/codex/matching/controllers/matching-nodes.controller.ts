@@ -8,6 +8,7 @@ import {
   Post,
   UsePipes,
   ValidationPipe,
+    Delete,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -40,7 +41,11 @@ export class MatchingNodesController {
   listNodes() {
     return this.matchingNodeRegistryService.listNodes();
   }
-
+    @Delete(':nodeId')
+    @ApiOperation({ summary: 'Delete a registered matching node' })
+    deleteNode(@Param('nodeId', new ParseUUIDPipe({ version: '4' })) nodeId: string) {
+        return this.matchingNodeRegistryService.deleteNode(nodeId);
+    }
   @Patch(':nodeId')
   @ApiOperation({ summary: 'Update node metadata or capabilities' })
   updateNode(

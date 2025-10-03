@@ -1,15 +1,16 @@
 import type { Express } from 'express';
-import { IsNotEmpty, IsNotEmptyObject, IsOptional, IsString, IsUrl } from 'class-validator';
+import type { Multer } from 'multer';
+
+import { IsNotEmpty, IsOptional, IsString, IsUrl } from 'class-validator';
 
 export class CreateSessionSiteDto {
-  @IsString()
-  @IsNotEmpty()
-  name!: string;
+    @IsString()
+    @IsNotEmpty()
+    name!: string;
 
-  @IsUrl()
-  baseUrl!: string;
+    @IsUrl()
+    baseUrl!: string;
 
-  @IsOptional()
-  @IsNotEmptyObject()
-  file?: Express.Multer.File;
+    @IsOptional()
+    file?: Express.Multer.File;
 }

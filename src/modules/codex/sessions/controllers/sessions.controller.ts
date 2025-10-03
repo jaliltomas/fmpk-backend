@@ -21,6 +21,7 @@ import { UploadRequestedProductsDto } from '../../dto/upload-requested-products.
 import { CreateSessionDto } from '../../dto/create-session.dto';
 import { PaginationDto } from '../../dto/pagination.dto';
 import { SessionsService } from '../services/sessions.service';
+import { CreateSiteDto } from "../../dto/create-site-dto";
 
 @ApiTags('sessions')
 @Controller({ path: 'sessions', version: '1' })
@@ -69,4 +70,18 @@ export class SessionsController {
       uploadRequestedProductsDto,
     );
   }
+    @Post(':sessionId/sites')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({ type: CreateSiteDto })
+    async createSite(
+        @Param('sessionId', new ParseUUIDPipe({ version: '4' })) sessionId: string,
+        @Body() body: CreateSiteDto,
+        @UploadedFile() file: Express.Multer.File,
+    ) {
+        return this.sessionsService.addSiteToSession(sessionId, {
+            ...body,
+            file,
+        });
+    }
 }

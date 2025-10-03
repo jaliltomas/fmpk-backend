@@ -307,4 +307,24 @@ export class SessionsService {
 
     return { products, metadata };
   }
+    async addSiteToSession(
+        sessionId: string,
+        dto: { name: string; baseUrl: string; file?: Express.Multer.File },
+    ) {
+        const siteRepo = this.dataSource.getRepository(SessionSite);
+
+        const site = siteRepo.create({
+            sessionId,
+            name: dto.name,
+            baseUrl: dto.baseUrl,
+            fileName: dto.file?.originalname ?? `${dto.name}-${Date.now()}`,
+            productCount: 0, // podés calcularlo si parseás el JSON
+            storageKey: `sessions/${sessionId}/sites/${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2)}`,
+        });
+
+        return siteRepo.save(site);
+    }
+
 }
