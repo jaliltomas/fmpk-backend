@@ -147,6 +147,7 @@ export class SessionsService {
       session.requestedProductsSite = {
         siteId: REQUESTED_PRODUCTS_SITE_ID,
         siteName: REQUESTED_PRODUCTS_SITE_NAME,
+        sourceType: 'requested',
         products,
       };
       session.matchRate = null;

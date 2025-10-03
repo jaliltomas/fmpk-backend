@@ -11,5 +11,6 @@ export interface RequestedProductRecord {
 export interface RequestedProductsSite {
   siteId: string;
   siteName: string;
+  sourceType: 'requested';
   products: RequestedProductRecord[];
 }
