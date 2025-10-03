@@ -43,6 +43,14 @@ export class MatchCandidate {
   @Column({ type: 'text' })
   value!: string;
 
+  @Column({
+    type: 'varchar',
+    length: 32,
+    name: 'source_type',
+    default: 'site',
+  })
+  sourceType!: 'requested' | 'site';
+
   @Column({ type: 'boolean', nullable: true })
   status?: boolean | null;
 

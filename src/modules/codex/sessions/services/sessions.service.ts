@@ -10,6 +10,11 @@ import { Session } from '../../entities/session.entity';
 import { SessionNode } from '../../entities/session-node.entity';
 import { SessionSite } from '../../entities/session-site.entity';
 import { MatchCandidate } from '../../entities/match-candidate.entity';
+import {
+  REQUESTED_PRODUCTS_SITE_ID,
+  REQUESTED_PRODUCTS_SITE_NAME,
+  RequestedProductRecord,
+} from '../../entities/requested-products-site.interface';
 
 @Injectable()
 export class SessionsService {
@@ -139,6 +144,11 @@ export class SessionsService {
 
       session.requestedProductsCount = products.length;
       session.requestedProductsFileMetadata = metadata;
+      session.requestedProductsSite = {
+        siteId: REQUESTED_PRODUCTS_SITE_ID,
+        siteName: REQUESTED_PRODUCTS_SITE_NAME,
+        products,
+      };
       session.matchRate = null;
       session.validationStats = null;
 
@@ -228,7 +238,10 @@ export class SessionsService {
     await sessionRepository.save(session);
   }
 
-  private parseRequestedProducts(file: Express.Multer.File) {
+  private parseRequestedProducts(file: Express.Multer.File): {
+    products: RequestedProductRecord[];
+    metadata: Record<string, unknown>;
+  } {
     if (!file?.buffer) {
       throw new BadRequestException('The uploaded file does not contain data');
     }
@@ -245,22 +258,43 @@ export class SessionsService {
       throw new BadRequestException('The JSON payload must be an array');
     }
 
-    const products = parsed.map((entry, index) => {
-      if (typeof entry === 'string' && entry.trim().length > 0) {
-        return entry.trim();
+    const products = parsed.map<RequestedProductRecord>((entry, index) => {
+      const fallbackName = `Producto ${index + 1}`;
+      const id = `${REQUESTED_PRODUCTS_SITE_ID}:${index}`;
+
+      if (typeof entry === 'string') {
+        const trimmed = entry.trim();
+        return {
+          id,
+          name: trimmed.length > 0 ? trimmed : fallbackName,
+          quantity: null,
+          metadata: { raw: entry },
+        };
       }
 
-      if (
-        entry &&
-        typeof entry === 'object' &&
-        'name' in entry &&
-        typeof (entry as Record<string, unknown>).name === 'string'
-      ) {
-        const name = (entry as Record<string, unknown>).name as string;
-        return name.trim().length > 0 ? name.trim() : `Producto ${index + 1}`;
+      if (entry && typeof entry === 'object') {
+        const rawEntry = entry as Record<string, unknown>;
+        const rawName =
+          typeof rawEntry.name === 'string' ? rawEntry.name.trim() : fallbackName;
+        const quantity =
+          typeof rawEntry.quantity === 'number' && Number.isFinite(rawEntry.quantity)
+            ? rawEntry.quantity
+            : null;
+
+        return {
+          id,
+          name: rawName.length > 0 ? rawName : fallbackName,
+          quantity,
+          metadata: rawEntry,
+        };
       }
 
-      return `Producto ${index + 1}`;
+      return {
+        id,
+        name: fallbackName,
+        quantity: null,
+        metadata: { raw: entry },
+      };
     });
 
     const metadata = {

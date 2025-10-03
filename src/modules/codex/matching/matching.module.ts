@@ -8,9 +8,14 @@ import { MatchingNodeRegistryService } from './services/matching-node-registry.s
 import { MatchingGateway } from './gateways/matching.gateway';
 import { MatchingNode } from '../entities/matching-node.entity';
 import { SessionsModule } from '../sessions/sessions.module';
+import { FilesModule } from '../../files/files.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([MatchingNode]), forwardRef(() => SessionsModule)],
+  imports: [
+    TypeOrmModule.forFeature([MatchingNode]),
+    forwardRef(() => SessionsModule),
+    FilesModule,
+  ],
   controllers: [MatchingController, MatchingNodesController],
   providers: [MatchingService, MatchingNodeRegistryService, MatchingGateway],
   exports: [MatchingService, MatchingNodeRegistryService, MatchingGateway],

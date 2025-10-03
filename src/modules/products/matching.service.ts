@@ -1,6 +1,6 @@
 import { HttpService } from '@nestjs/axios';
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { AxiosError } from 'axios';
+import type { AxiosError, AxiosResponse } from 'axios';
 import { firstValueFrom } from 'rxjs';
 
 import { CreateProductDto } from './dto/create-product.dto';
@@ -34,8 +34,11 @@ export class MatchingService {
     await Promise.all(
       nodes.map(async (node) => {
         try {
-          const response = await firstValueFrom(
-            this.httpService.post(`http://${node.host}:${node.port}/match`, product),
+          const response: AxiosResponse<unknown> = await firstValueFrom(
+            this.httpService.post<unknown>(
+              `http://${node.host}:${node.port}/match`,
+              product,
+            ),
           );
 
           results[node.id] = this.normalizeNodeResponse(response.data);

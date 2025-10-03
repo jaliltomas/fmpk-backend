@@ -10,6 +10,7 @@ import {
 import { MatchRow } from './match-row.entity';
 import { SessionNode } from './session-node.entity';
 import { SessionSite } from './session-site.entity';
+import { RequestedProductsSite } from './requested-products-site.interface';
 
 @Entity({ name: 'sessions' })
 @Index('IDX_sessions_name', ['name'])
@@ -38,6 +39,13 @@ export class Session {
     nullable: true,
   })
   requestedProductsFileMetadata?: Record<string, unknown> | null;
+
+  @Column({
+    type: 'jsonb',
+    name: 'requested_products_site',
+    nullable: true,
+  })
+  requestedProductsSite?: RequestedProductsSite | null;
 
   @OneToMany(() => SessionNode, (node) => node.session, { cascade: true })
   nodes!: SessionNode[];
