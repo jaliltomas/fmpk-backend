@@ -5,8 +5,8 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import * as http from 'node:http';
-import * as https from 'node:https';
+import * as http from 'http';
+import * as https from 'https';
 import { DataSource, EntityManager } from 'typeorm';
 
 import { ResetMatchesDto } from '../../dto/reset-matches.dto';
@@ -27,6 +27,10 @@ import {
   SessionSiteFileDescriptor,
   SessionSiteProductRecord,
 } from '../../../files/files.service';
+import {
+  MatchingProductDto,
+  MatchingResponseDto,
+} from '../dto/matching-response.dto';
 
 type CatalogSourceType = 'requested' | 'site';
 
@@ -127,10 +131,10 @@ export class MatchingService {
   async resetMatches(
     sessionId: string,
     resetMatchesDto: ResetMatchesDto,
-  ): Promise<void> {
+  ): Promise<MatchingResponseDto> {
     void resetMatchesDto;
 
-    await this.dataSource.transaction(async (manager) => {
+    return this.dataSource.transaction(async (manager) => {
       const sessionRepository = manager.getRepository(Session);
       const matchRowRepository = manager.getRepository(MatchRow);
       const siteRepository = manager.getRepository(SessionSite);
@@ -164,6 +168,13 @@ export class MatchingService {
         requestedProducts,
       );
 
+      const response = this.buildMatchingResponse(
+        session.id,
+        requestedProducts,
+        matchesByRequested,
+        siteSources,
+      );
+
       await matchRowRepository.delete({ sessionId });
 
       const rows = this.buildMatchRows(
@@ -182,6 +193,8 @@ export class MatchingService {
       session.matchRate = null;
 
       await sessionRepository.save(session);
+
+      return response;
     });
   }
 
@@ -431,70 +444,127 @@ export class MatchingService {
     payload: MatchingNodeRequestPayload,
   ): Promise<MatchingNodeResponse> {
     const endpointPath = this.resolveMatchEndpoint(node);
-    const url = this.resolveNodeUrl(node, endpointPath);
-    const httpModule = url.protocol === 'https:' ? https : http;
+    const url = this.resolveNodeUrl(node, endpointPath).toString();
 
-    const body = JSON.stringify(payload);
+    const parsedUrl = new URL(url);
+    const isHttps = parsedUrl.protocol === 'https:';
+    const requestFn = isHttps ? https.request : http.request;
 
-    return new Promise<MatchingNodeResponse>((resolve, reject) => {
-      const request = httpModule.request(
-        url,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(body),
-          },
-        },
-        (response) => {
-          let raw = '';
+    const requestOptions: http.RequestOptions = {
+      protocol: parsedUrl.protocol,
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: `${parsedUrl.pathname}${parsedUrl.search}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-ndjson',
+        Accept: 'application/json',
+      },
+    };
 
-          response.setEncoding('utf-8');
-          response.on('data', (chunk) => {
-            raw += chunk;
+    try {
+      const rawResponse = await new Promise<string>((resolve, reject) => {
+        let settled = false;
+        const finalizeResolve = (value: string) => {
+          if (!settled) {
+            settled = true;
+            resolve(value);
+          }
+        };
+        const finalizeReject = (reason: Error) => {
+          if (!settled) {
+            settled = true;
+            reject(reason);
+          }
+        };
+        const wrapRequestError = (reason: unknown): Error =>
+          reason instanceof Error
+            ? new Error(`Node ${node.id} request failed: ${reason.message}`)
+            : new Error(`Node ${node.id} request failed: ${String(reason)}`);
+
+        const req = requestFn(requestOptions, (res) => {
+          const { statusCode = 0 } = res;
+          const chunks: Buffer[] = [];
+
+          res.on('error', (resError) => {
+            finalizeReject(wrapRequestError(resError));
           });
 
-          response.on('error', (error) => reject(error));
+          res.on('data', (chunk) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
 
-          response.on('end', () => {
-            if (response.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
-              if (raw.length === 0) {
-                resolve({ matches: [] });
-                return;
-              }
+          res.on('end', () => {
+            const body = Buffer.concat(chunks).toString('utf8');
 
-              try {
-                const parsed = JSON.parse(raw) as MatchingNodeResponse;
-                resolve(parsed);
-              } catch (error) {
-                reject(
-                  new Error(
-                    `Node ${node.id} returned invalid JSON response: ${
-                      error instanceof Error ? error.message : String(error)
-                    }`,
-                  ),
-                );
-              }
-            } else {
-              reject(
+            if (statusCode < 200 || statusCode >= 300) {
+              const snippet = body ? `: ${body.slice(0, 500)}` : '';
+              finalizeReject(
                 new Error(
-                  `Node ${node.id} responded with status ${
-                    response.statusCode ?? 'unknown'
-                  }`,
+                  `Node ${node.id} request failed with status ${statusCode}${snippet}`,
                 ),
               );
+              return;
             }
-          });
-        },
-      );
 
-      request.on('error', (error) => reject(error));
-      request.setTimeout(this.nodeRequestTimeoutMs, () => {
-        request.destroy(new Error('Request to matching node timed out'));
+            finalizeResolve(body);
+          });
+        });
+
+        req.on('error', (error) => {
+          finalizeReject(wrapRequestError(error));
+        });
+
+        req.setTimeout(this.nodeRequestTimeoutMs, () => {
+          finalizeReject(
+            new Error(
+              `Node ${node.id} request timed out after ${this.nodeRequestTimeoutMs}ms`,
+            ),
+          );
+          req.destroy();
+        });
+
+        for (const product of payload.products) {
+          req.write(`${JSON.stringify(product)}\n`);
+        }
+
+        req.end();
       });
-      request.write(body);
-      request.end();
-    });
+
+      const trimmed = rawResponse.trim();
+      const parsed = trimmed ? JSON.parse(trimmed) : {};
+
+      return this.normalizeNodeResponse(parsed, node);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(`Node ${node.id} returned an invalid JSON response`);
+      }
+
+      throw error instanceof Error
+        ? error
+        : new Error(`Node ${node.id} request failed: ${String(error)}`);
+    }
+  }
+
+  private normalizeNodeResponse(
+    data: unknown,
+    node: MatchingNode,
+  ): MatchingNodeResponse {
+    if (!data) {
+      return { matches: [] };
+    }
+
+    if (typeof data !== 'object') {
+      throw new Error(`Node ${node.id} returned an invalid response payload`);
+    }
+
+    const response = data as MatchingNodeResponse;
+    const matches = Array.isArray(response.matches) ? response.matches : [];
+
+    return {
+      ...response,
+      matches,
+    };
   }
 
   private resolveMatchEndpoint(node: MatchingNode): string {
@@ -643,9 +713,11 @@ export class MatchingService {
         orderIndex: index,
       });
 
-      const matches =
-        matchesByRequested.get(product.id) ??
-        this.buildFallbackCandidatesForProduct(product, siteSources);
+      const matches = this.resolveMatchesForProduct(
+        product,
+        matchesByRequested,
+        siteSources,
+      );
 
       row.candidates = matches.map((candidate) =>
         this.createMatchCandidate(candidate, manager),
@@ -653,6 +725,61 @@ export class MatchingService {
 
       return row;
     });
+  }
+
+  private resolveMatchesForProduct(
+    product: CatalogProduct,
+    matchesByRequested: Map<string, NodeMatchCandidateEntry[]>,
+    siteSources: CatalogSource[],
+  ): NodeMatchCandidateEntry[] {
+    const matches = matchesByRequested.get(product.id);
+
+    if (matches) {
+      return matches;
+    }
+
+    return this.buildFallbackCandidatesForProduct(product, siteSources);
+  }
+
+  private buildMatchingResponse(
+    sessionId: string,
+    requestedProducts: CatalogProduct[],
+    matchesByRequested: Map<string, NodeMatchCandidateEntry[]>,
+    siteSources: CatalogSource[],
+  ): MatchingResponseDto {
+    const rows = requestedProducts.map((product) => {
+      const matches = this.resolveMatchesForProduct(
+        product,
+        matchesByRequested,
+        siteSources,
+      );
+
+      return {
+        requestedProduct: this.mapProductToDto(product),
+        candidates: matches.map((match) => ({
+          nodeId: match.nodeId,
+          score: match.score ?? null,
+          product: this.mapProductToDto(match.product),
+        })),
+      };
+    });
+
+    return {
+      sessionId,
+      rows,
+    };
+  }
+
+  private mapProductToDto(product: CatalogProduct): MatchingProductDto {
+    return {
+      id: product.id,
+      name: product.name,
+      siteId: product.siteId,
+      siteName: product.siteName,
+      sourceType: product.sourceType,
+      quantity: product.quantity ?? null,
+      metadata: product.metadata ?? null,
+    };
   }
 
   private buildFallbackCandidatesForProduct(

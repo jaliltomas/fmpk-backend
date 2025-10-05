@@ -167,3 +167,89 @@ src/
 4. **Fase de observabilidad**: métricas, tracing, alertas.
 
 Este plan establece la base modular y escalable necesaria para el backend de Codex, asegurando claridad en responsabilidades y facilidad de evolución.
+
+## Anexo A. Flujo de matching con productos solicitados
+
+Para alinear el backend con la necesidad de tratar el archivo de productos solicitados como un sitio virtual adicional dentro de una sesión, se implementó el siguiente flujo en NestJS:
+
+### A.1. Persistencia de solicitados como "site" virtual
+
+```ts
+// sessions.service.ts
+session.requestedProductsSite = {
+  siteId: REQUESTED_PRODUCTS_SITE_ID,
+  siteName: REQUESTED_PRODUCTS_SITE_NAME,
+  sourceType: 'requested',
+  products,
+};
+```
+
+Cada producto solicitado se serializa con `id`, `name`, `quantity` opcional y metadatos crudos. La sesión guarda este catálogo virtual junto con los sitios reales cargados desde archivos.
+
+### A.2. Ejecución del matching contra nodos Python
+
+```ts
+// matching.service.ts
+const payload = this.buildNodeRequestPayload(session.id, allProducts);
+const response = await axios.post<MatchingNodeResponse>(
+  `${node.host}/matchByName`,
+  payload,
+  { timeout: 15_000 },
+);
+```
+
+El servicio construye un `payload` con todos los productos (sitios reales + solicitados) y envía una petición `POST` al endpoint `/matchByName` expuesto por el nodo Python en EC2. La respuesta normalizada se usa para poblar las filas y candidatos de coincidencia en la sesión.
+
+### A.3. Estructura de request/response esperada
+
+**Request**
+
+```json
+{
+  "sessionId": "<uuid>",
+  "products": [
+    {
+      "id": "requested-products:0",
+      "name": "Aceite 5W30",
+      "siteId": "requested-products",
+      "siteName": "Requested products",
+      "sourceType": "requested",
+      "quantity": 2,
+      "metadata": { "sku": "A-001" }
+    },
+    {
+      "id": "site-1:42",
+      "name": "Aceite Total Quartz 5W30",
+      "siteId": "site-1",
+      "siteName": "AutoParts Store",
+      "sourceType": "site",
+      "quantity": 5,
+      "metadata": { "price": 15.5 }
+    }
+  ]
+}
+```
+
+**Response**
+
+```json
+{
+  "matches": [
+    {
+      "requestedProductId": "requested-products:0",
+      "candidates": [
+        {
+          "id": "site-1:42",
+          "name": "Aceite Total Quartz 5W30",
+          "siteId": "site-1",
+          "siteName": "AutoParts Store",
+          "sourceType": "site",
+          "score": 0.93
+        }
+      ]
+    }
+  ]
+}
+```
+
+El DTO de respuesta REST expuesto por `MatchingController` devuelve ahora, para cada fila, el producto solicitado y sus candidatos indicando explícitamente si provienen del catálogo de solicitados (`sourceType: "requested"`) o de un sitio (`sourceType: "site"`).

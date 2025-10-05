@@ -13,6 +13,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { ResetMatchesDto } from '../../dto/reset-matches.dto';
 import { UpdateMatchStatusDto } from '../../dto/update-match-status.dto';
 import { MatchingService } from '../services/matching.service';
+import { MatchingResponseDto } from '../dto/matching-response.dto';
 
 @ApiTags('matching')
 @Controller({ path: 'sessions/:sessionId/matching', version: '1' })
@@ -43,7 +44,7 @@ export class MatchingController {
   resetMatches(
     @Param('sessionId', new ParseUUIDPipe({ version: '4' })) sessionId: string,
     @Body() resetMatchesDto: ResetMatchesDto,
-  ) {
+  ): Promise<MatchingResponseDto> {
     return this.matchingService.resetMatches(sessionId, resetMatchesDto);
   }
 }
